@@ -8,3 +8,5 @@ langchain
 langchain_openai
 openai-whisper
 chromadb
+pypdf
+pypdfium2
