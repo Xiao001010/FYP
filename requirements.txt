@@ -10,3 +10,4 @@ openai-whisper
 chromadb
 pypdf
 pypdfium2
+docx2txt
