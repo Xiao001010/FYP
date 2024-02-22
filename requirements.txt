@@ -8,6 +8,7 @@ langchain
 langchain_openai
 openai-whisper
 chromadb==0.4.22
+pysqlite3-binary
 pypdf
 pypdfium2
 docx2txt
