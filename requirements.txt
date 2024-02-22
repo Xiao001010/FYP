@@ -7,7 +7,7 @@ python-dotenv
 langchain
 langchain_openai
 openai-whisper
-chromadb
+chromadb==0.4.22
 pypdf
 pypdfium2
 docx2txt
