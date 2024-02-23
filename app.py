@@ -88,7 +88,6 @@ def embed(docs, embeddings):
     with get_openai_callback() as cb:
         db = Chroma.from_documents(docs, embeddings)
         print(f"Embedding Callback: \n{cb}")
-    # db = Chroma.from_documents(docs, embeddings)
     return db
 
 def load_llm(llm_name):
@@ -192,6 +191,10 @@ def generate_quiz_map_reduce(llm, docs, n_questions=3):
     questions_list = [{"question": q["question"], "options": ["".join(x).strip() for x in zip(q["options"][1::2], q["options"][2::2])], "answer": q["answer"].strip()} for q in questions_list]
 
     return questions_list
+
+#TODO: add support for using clustering to generate quiz for large files
+def generate_quiz_clustering(llm, docs, n_questions=3):
+    pass
 
 def generate_feedback(llm, doc, question, user_answer):
     template = """
