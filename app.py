@@ -195,7 +195,6 @@ def generate_quiz_map_reduce(llm, docs, n_questions=3):
 
     return questions_list
 
-#TODO: add support for using clustering to generate quiz for large files
 def generate_quiz_clustering(llm, vectorstore, n_questions=3):
     vectors = vectorstore.get(include=["embeddings"])["embeddings"]
     documents = vectorstore.get()["documents"]
