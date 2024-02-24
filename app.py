@@ -4,6 +4,9 @@ import tempfile
 import streamlit as st
 from dotenv import load_dotenv
 
+import numpy as np
+from sklearn.cluster import KMeans
+
 import whisper
 from langchain.docstore.document import Document
 from langchain_community.document_loaders import PyPDFium2Loader, UnstructuredPDFLoader, TextLoader, UnstructuredFileLoader, Docx2txtLoader, UnstructuredWordDocumentLoader
@@ -193,8 +196,77 @@ def generate_quiz_map_reduce(llm, docs, n_questions=3):
     return questions_list
 
 #TODO: add support for using clustering to generate quiz for large files
-def generate_quiz_clustering(llm, docs, n_questions=3):
-    pass
+def generate_quiz_clustering(llm, vectorstore, n_questions=3):
+    vectors = vectorstore.get(include=["embeddings"])["embeddings"]
+    documents = vectorstore.get()["documents"]
+    print(f"Using clustering to generate quiz with {len(vectors)} vectors to generate {n_questions} questions")
+    num_clusters = n_questions
+
+    kmeans = KMeans(n_clusters=num_clusters, random_state=42).fit(vectors)
+    # labels_dict = {index:label for index, label in enumerate(kmeans.labels_)}
+    # Find the closest embeddings to the centroids
+
+    # Create an empty list that will hold your closest points
+    closest_indices = []
+
+    # Loop through the number of clusters you have
+    for i in range(num_clusters):
+        
+        # Get the list of distances from that particular cluster center
+        distances = np.linalg.norm(vectors - kmeans.cluster_centers_[i], axis=1)
+        
+        # Find the list position of the closest one (using argmin to find the smallest distance)
+        closest_index = np.argmin(distances)
+        
+        # Append that position to your closest indices list
+        closest_indices.append(closest_index)
+
+    # Print the indices of the closest embeddings to the centroids
+    print(f"closest_indices: {closest_indices}")
+    # print(f"labels_dict: {labels_dict}")
+    # print(f"labels: {[labels_dict[index] for index in closest_indices]}")
+    selected_indices = sorted(closest_indices)
+    selected_docs = [Document(page_content=documents[index]) for index in selected_indices]
+    template = """
+    Using the content provided below from a PDF delimited by triple backquotes, 
+    please generate a multiple-choice test consisting of {n_questions} questions to aid students in their review. 
+    Each question should be related to the key concepts, facts, or information in the text, and following the specific format below:
+    Begin each question with the word "Question" and a number, followed by a colon.
+    Then, provide the options for the question beginning with the word "Options" and a colon.
+    Ensure that for each question, there is one correct answer and three plausible but incorrect options. 
+    End each question with the word "Answer" and a colon, followed by the correct answer.
+
+    ```{text}```
+    """
+    # print(f"lem template: {len(template)}")
+    template = re.sub(r"{n_questions}", str(n_questions), template)
+
+    prompt = PromptTemplate(
+        input_variables=["text"],
+        template=template,
+    )
+
+    quiz_chain = load_summarize_chain(llm, 
+                                        chain_type="stuff", 
+                                        prompt=prompt, 
+                                        verbose=False)
+    print(f"Processing document ...")
+    print(f"This doc has {llm.get_num_tokens(selected_docs[0].page_content)} tokens.")
+    print(f"This doc has {len(selected_docs[0].page_content)} characters. {len(selected_docs[0].page_content) / llm.get_num_tokens(selected_docs[0].page_content)} characters per token.")
+    with get_openai_callback() as cb:
+        quiz = quiz_chain.invoke(selected_docs)
+        print(f"Generate Quiz using clustering Callback: \n{cb}")
+    
+    print(f"Generated quiz: {quiz['output_text']}")
+    # remove "Question 1: ", "Question 2: ", "question 1", etc. from the beginning of the questions
+    questions_list = [{"question": re.sub(r"question? ?\d+?\n", "", re.sub(r"Question? ?\d+?\n", "", re.split(r"\nOptions:", q)[0])),
+                        "options": re.split(r"\n([A, B, C, D, a, b, c, d])", re.split(r"\nAnswer: ", re.split(r'Options:', q)[1])[0]),
+                        "answer": re.split(r"\nAnswer:", q)[1]}
+                        for q in re.split(r'Question \d+: ', quiz['output_text']) if q != ""]
+    questions_list = [{"question": q["question"], "options": ["".join(x).strip() for x in zip(q["options"][1::2], q["options"][2::2])], "answer": q["answer"].strip()} for q in questions_list]
+
+    print(f"Generated quiz: {questions_list}")
+    return questions_list
 
 def generate_feedback(llm, doc, question, user_answer):
     template = """
@@ -304,10 +376,16 @@ def main():
         st.session_state.embeddings = "OpenAIEmbeddings"
     if 'llm_name' not in st.session_state:
         st.session_state.llm_name = None
+    if 'n_questions' not in st.session_state:
+        st.session_state.n_questions = 3
+    if 'generate_method' not in st.session_state:
+        st.session_state.generate_method = "MapReduce"
     if 'llm' not in st.session_state:
         st.session_state.llm = None
     if 'large_file' not in st.session_state:
         st.session_state.large_file = False
+    if 'doc_limit' not in st.session_state:
+        st.session_state.doc_limit = 63_000
     if 'db' not in st.session_state:
         st.session_state.db = None
     if 'quiz' not in st.session_state:
@@ -348,11 +426,11 @@ def main():
                     st.success("Files loaded!")
                 else:
                     st.warning("No files uploaded")
-            if len(st.session_state.doc.page_content) > 80000:
+            if len(st.session_state.doc.page_content) > 63_000:
                 st.session_state.large_file = True
 
-        if st.session_state.large_file:
-            st.warning(f"Document {uploaded_file.name} is large. Consider splitting it into smaller chunks.")
+        if st.session_state.large_file and st.session_state.doc:
+            st.warning(f"Document has {len(st.session_state.doc.page_content)} characters which will exceed GPT limits. Please split the document into smaller chunks.")
             # print(st.session_state.doc)
             print(f"The total number of characters in {uploaded_file.name} is {len(st.session_state.doc.page_content)}")
             # st.session_state.text_splitter = st.selectbox("Choose Text Splitter", ["RecursiveCharacterTextSplitter"])
@@ -363,47 +441,74 @@ def main():
                 st.session_state.chunks = chuk_files([st.session_state.doc], chunk_size, chunk_overlap)
                 
                 st.success("Done!")
+            st.session_state.generate_method = st.selectbox("Choose Quiz Generation Method", ["MapReduce", "Clustering", "Stuff"])
         
         st.session_state.embeddings = st.selectbox("Choose Embeddings model", ["OpenAIEmbeddings", "HuggingFaceInstructEmbeddings"])
         st.session_state.llm_name = st.selectbox("LLM", ["gpt-3.5-turbo-1106", "gpt-4-1106-preview", "LlamaCpp"])
         st.session_state.n_questions = st.slider("Number of questions", min_value=1, max_value=8, value=3, step=1)
+        if st.session_state.llm_name == "LlamaCpp":
+            st.warning("LlamaCpp is not supported yet")
+        elif st.session_state.llm_name == "gpt-4-1106-preview":
+            st.session_state.doc_limit = 511_000
+        elif st.session_state.llm_name == "gpt-3.5-turbo-1106":
+            st.session_state.doc_limit = 63_000
         
 
-        if st.button("Process"):
-            if uploaded_file:
-                # The embeddings will be used when the user ask questions and get feedback
-                with st.spinner("Embedding ..."):
-                    if st.session_state.large_file:
-                        st.session_state.db = embed(st.session_state.chunks, st.session_state.embeddings)
-                    else:
-                        st.session_state.db = embed([st.session_state.doc], st.session_state.embeddings)
-                # st.write(f"Embedded {len(vectors)} chunks")
-                with st.spinner("Loading LLM..."):
-                    print(f"Loading {st.session_state.llm_name}")
-                    st.session_state.llm = load_llm(st.session_state.llm_name)
-                with st.spinner("Generating quiz..."):
-                    print(f"Generating quiz using {st.session_state.llm_name}")
-                    # TODO: refine the quiz generation process
-                    if st.session_state.large_file:
-                        # add support for large files: using map_reduce or clustering
-                        st.session_state.quiz = generate_quiz_map_reduce(st.session_state.llm, st.session_state.chunks, st.session_state.n_questions)
-                    else:
-                        st.session_state.quiz = generate_quiz(st.session_state.llm, st.session_state.doc, st.session_state.n_questions)
-                # st.session_state.quiz = [[{'question': 'What are some things that users can do in order to minimize the risk of a hacker getting hold of their password?', 
-                #              'options': ['A. Use the same password for all systems', 'B. Change the default password', 'C. Write their password down', 'D. Change their password frequently'], 
-                #              'answer': 'D. Change their password frequently'}, 
-                #              {'question': 'What are some things that the system can do in order to minimize the risk of attack?', 
-                #               'options': ['A. Provide the user with a default password', 'B. Reject weak passwords', 'C. Limit log-in attempts to a maximum of three', 'D. Allow the user to create a password'], 
-                #               'answer': 'B. Reject weak passwords'}, 
-                #               {'question': 'What are some measures that can be enforced by the system to minimize the risk of attack?', 
-                #                'options': ['A. Inform users of each unsuccessful log-in attempt', 'B. Insist that users choose a dictionary word as their password', 'C. Allow unlimited log-in attempts', 'D. Enforce the user to change the default password at the first log-in'], 
-                #                'answer': 'A. Inform users of each unsuccessful log-in attempt'}]]
-                st.success("Done!")
-                print(f"Generated quiz: {st.session_state.quiz}")
+        if (st.session_state.large_file and st.session_state.chunks) or (not st.session_state.large_file and st.session_state.doc):
+            if st.button("Process"):
+                if uploaded_file:
+                    # The embeddings will be used when the user ask questions and get feedback
+                    with st.spinner("Embedding ..."):
+                        if st.session_state.large_file:
+                            st.session_state.db = embed(st.session_state.chunks, st.session_state.embeddings)
+                        else:
+                            st.session_state.db = embed([st.session_state.doc], st.session_state.embeddings)
+                    # st.write(f"Embedded {len(vectors)} chunks")
+                    with st.spinner("Loading LLM..."):
+                        print(f"Loading {st.session_state.llm_name}")
+                        st.session_state.llm = load_llm(st.session_state.llm_name)
+                    with st.spinner("Generating quiz..."):
+                        print(f"Generating quiz using {st.session_state.llm_name}")
+                        # TODO: refine the quiz generation process
+                        if st.session_state.large_file:
+                            if st.session_state.generate_method == "Stuff":
+                                max_docs = st.session_state.doc_limit // chunk_size
+                                num_chunks = len(st.session_state.chunks)
+                                stuff_chunks = [st.session_state.chunks[i:i+max_docs] for i in range(0, num_chunks, max_docs)]
+                                for i, chunks in enumerate(stuff_chunks):
+                                    st.session_state.quiz += generate_quiz(st.session_state.llm, chunks, st.session_state.n_questions)
+                            elif st.session_state.generate_method == "MapReduce":
+                                st.session_state.quiz = generate_quiz_map_reduce(st.session_state.llm, st.session_state.chunks, st.session_state.n_questions)
+                            elif st.session_state.generate_method == "Clustering":
+                                if st.session_state.n_questions*chunk_size >  st.session_state.doc_limit:
+                                    max_docs = st.session_state.doc_limit // chunk_size
+                                    # print(f"The number of clusters is too large which will exceeding the GPT 3.5 limitation of 16k. The number of clusters is set to {n_question}.")
+                                    for i in range(st.session_state.n_questions // max_docs):
+                                        st.session_state.quiz += generate_quiz_clustering(st.session_state.llm, st.session_state.db, max_docs)
+                                    st.session_state.quiz += generate_quiz_clustering(st.session_state.llm, st.session_state.db, st.session_state.n_questions % max_docs)
+                                else:
+                                    # print(f"The number of clusters is set to {n_question}.")
+                                    st.session_state.quiz = generate_quiz_clustering(st.session_state.llm, st.session_state.db, st.session_state.n_questions)
+                                
+                            else:
+                                raise NotImplementedError
+                        else:
+                            st.session_state.quiz = generate_quiz(st.session_state.llm, st.session_state.doc, st.session_state.n_questions)
+                    # st.session_state.quiz = [[{'question': 'What are some things that users can do in order to minimize the risk of a hacker getting hold of their password?', 
+                    #              'options': ['A. Use the same password for all systems', 'B. Change the default password', 'C. Write their password down', 'D. Change their password frequently'], 
+                    #              'answer': 'D. Change their password frequently'}, 
+                    #              {'question': 'What are some things that the system can do in order to minimize the risk of attack?', 
+                    #               'options': ['A. Provide the user with a default password', 'B. Reject weak passwords', 'C. Limit log-in attempts to a maximum of three', 'D. Allow the user to create a password'], 
+                    #               'answer': 'B. Reject weak passwords'}, 
+                    #               {'question': 'What are some measures that can be enforced by the system to minimize the risk of attack?', 
+                    #                'options': ['A. Inform users of each unsuccessful log-in attempt', 'B. Insist that users choose a dictionary word as their password', 'C. Allow unlimited log-in attempts', 'D. Enforce the user to change the default password at the first log-in'], 
+                    #                'answer': 'A. Inform users of each unsuccessful log-in attempt'}]]
+                    st.success("Done!")
+                    print(f"Generated quiz: {st.session_state.quiz}")
+                else:
+                    st.write("No files uploaded")
             else:
-                st.write("No files uploaded")
-        else:
-            st.write("Click the button to process your documents")
+                st.write("Click the button to process your documents")
     
     st.header("Quiz")
     if not st.session_state.quiz:
