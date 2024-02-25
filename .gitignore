@@ -5,4 +5,5 @@ temp/
 draft.py
 app_bk.py
 app_raw.py
-.DS_Store
+llama/
+llama.cpp/
