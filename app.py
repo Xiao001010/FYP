@@ -98,10 +98,6 @@ def load_llm(llm_name):
         llm = ChatOpenAI(model_name="gpt-3.5-turbo-1106")
     elif llm_name == "gpt-4-1106-preview":
         llm = ChatOpenAI(model_name="gpt-4-1106-preview")
-    elif llm_name == "LlamaCpp":
-        # TODO: add support for LlamaCpp
-        # llm = HuggingFaceHub(model_name="LlamaCpp")
-        raise NotImplementedError
     else:
         raise NotImplementedError
     return llm
@@ -443,11 +439,9 @@ def main():
             st.session_state.generate_method = st.selectbox("Choose Quiz Generation Method", ["MapReduce", "Clustering", "Stuff"])
         
         st.session_state.embeddings = st.selectbox("Choose Embeddings model", ["OpenAIEmbeddings", "HuggingFaceInstructEmbeddings"])
-        st.session_state.llm_name = st.selectbox("LLM", ["gpt-3.5-turbo-1106", "gpt-4-1106-preview", "LlamaCpp"])
+        st.session_state.llm_name = st.selectbox("LLM", ["gpt-3.5-turbo-1106", "gpt-4-1106-preview"])
         st.session_state.n_questions = st.slider("Number of questions", min_value=1, max_value=8, value=3, step=1)
-        if st.session_state.llm_name == "LlamaCpp":
-            st.warning("LlamaCpp is not supported yet")
-        elif st.session_state.llm_name == "gpt-4-1106-preview":
+        if st.session_state.llm_name == "gpt-4-1106-preview":
             st.session_state.doc_limit = 511_000
         elif st.session_state.llm_name == "gpt-3.5-turbo-1106":
             st.session_state.doc_limit = 63_000
