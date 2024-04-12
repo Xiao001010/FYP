@@ -357,9 +357,6 @@ def main():
     load_dotenv()
     docs = []
 
-    st.title("LLM Review Assistant")
-    st.write("A tool to help you review your documents")
-
     #  Initialize parameters in session state
     if 'filename' not in st.session_state:
         st.session_state.filename = None
@@ -392,11 +389,15 @@ def main():
     if 'feedback' not in st.session_state:
         st.session_state.feedback = {}
 
+    st.title("LLM Review Assistant")
+    st.write("A tool to help you review your documents")
+
     with st.sidebar:
         st.header("Settings")
         st.subheader("Process your Documents")
-        # st.subheader("Your Documents")
+        # Upload files
         uploaded_file = st.file_uploader("Upload your documents", accept_multiple_files=False, type=["pdf", "txt", "docx", "mp3", "wav", "mp4"])
+        # Select the loader
         if uploaded_file is None:
             st.warning("No files uploaded")
         elif uploaded_file.name.endswith(".pdf"):
@@ -410,6 +411,7 @@ def main():
         else:
             st.warning("Unsupported file type")
 
+        # Load the files
         if uploaded_file and uploaded_file.name != st.session_state.filename:
             with st.spinner("Loading files..."):
                 st.session_state.filename = uploaded_file.name
@@ -417,18 +419,19 @@ def main():
                 st.session_state.doc = load_files(uploaded_file, loader)
                 print(f"Loaded {uploaded_file.name} with {loader}")
 
+                # Show if the files are loaded
                 if st.session_state.doc:
                     st.success("Files loaded!")
                 else:
                     st.warning("No files uploaded")
+            # Check if the file is too large
             if len(st.session_state.doc.page_content) > 63_000:
                 st.session_state.large_file = True
 
+        # Split the files if it is too large
         if st.session_state.large_file and st.session_state.doc:
             st.warning(f"Document has {len(st.session_state.doc.page_content)} characters which will exceed GPT limits. Please split the document into smaller chunks.")
-            # print(st.session_state.doc)
             print(f"The total number of characters in {uploaded_file.name} is {len(st.session_state.doc.page_content)}")
-            # st.session_state.text_splitter = st.selectbox("Choose Text Splitter", ["RecursiveCharacterTextSplitter"])
             chunk_size = st.slider("Choose Chunk Size", min_value=5000, max_value=min(len(st.session_state.doc.page_content)//2, 50000), value=20000, step=1000)
             chunk_overlap = st.slider("Choose Chunk Overlap", min_value=0, max_value=chunk_size//2, value=1000, step=500)
             if st.button("Split"):
@@ -436,33 +439,37 @@ def main():
                 st.session_state.chunks = chuk_files([st.session_state.doc], chunk_size, chunk_overlap)
                 
                 st.success("Done!")
+            # Select the quiz generation method
             st.session_state.generate_method = st.selectbox("Choose Quiz Generation Method", ["MapReduce", "Clustering", "Stuff"])
         
+        # Select the embeddings model
         st.session_state.embeddings = st.selectbox("Choose Embeddings model", ["OpenAIEmbeddings", "HuggingFaceInstructEmbeddings"])
+        # Select the LLM model
         st.session_state.llm_name = st.selectbox("LLM", ["gpt-3.5-turbo-1106", "gpt-4-1106-preview"])
+        # Select the number of questions
         st.session_state.n_questions = st.slider("Number of questions", min_value=1, max_value=8, value=3, step=1)
+        # Set the document limit
         if st.session_state.llm_name == "gpt-4-1106-preview":
             st.session_state.doc_limit = 511_000
         elif st.session_state.llm_name == "gpt-3.5-turbo-1106":
             st.session_state.doc_limit = 63_000
         
-
         if (st.session_state.large_file and st.session_state.chunks) or (not st.session_state.large_file and st.session_state.doc):
             if st.button("Process"):
                 if uploaded_file:
-                    # The embeddings will be used when the user ask questions and get feedback
+                    # Eembed the chunks/documents
                     with st.spinner("Embedding ..."):
                         if st.session_state.large_file:
                             st.session_state.db = embed(st.session_state.chunks, st.session_state.embeddings)
                         else:
                             st.session_state.db = embed([st.session_state.doc], st.session_state.embeddings)
-                    # st.write(f"Embedded {len(vectors)} chunks")
+                    # Load the LLM
                     with st.spinner("Loading LLM..."):
                         print(f"Loading {st.session_state.llm_name}")
                         st.session_state.llm = load_llm(st.session_state.llm_name)
+                    # Generate quiz based on the method selected
                     with st.spinner("Generating quiz..."):
                         print(f"Generating quiz using {st.session_state.llm_name}")
-                        # TODO: refine the quiz generation process
                         if st.session_state.large_file:
                             if st.session_state.generate_method == "Stuff":
                                 max_docs = st.session_state.doc_limit // chunk_size
@@ -487,15 +494,7 @@ def main():
                                 raise NotImplementedError
                         else:
                             st.session_state.quiz = generate_quiz(st.session_state.llm, st.session_state.doc, st.session_state.n_questions)
-                    # st.session_state.quiz = [[{'question': 'What are some things that users can do in order to minimize the risk of a hacker getting hold of their password?', 
-                    #              'options': ['A. Use the same password for all systems', 'B. Change the default password', 'C. Write their password down', 'D. Change their password frequently'], 
-                    #              'answer': 'D. Change their password frequently'}, 
-                    #              {'question': 'What are some things that the system can do in order to minimize the risk of attack?', 
-                    #               'options': ['A. Provide the user with a default password', 'B. Reject weak passwords', 'C. Limit log-in attempts to a maximum of three', 'D. Allow the user to create a password'], 
-                    #               'answer': 'B. Reject weak passwords'}, 
-                    #               {'question': 'What are some measures that can be enforced by the system to minimize the risk of attack?', 
-                    #                'options': ['A. Inform users of each unsuccessful log-in attempt', 'B. Insist that users choose a dictionary word as their password', 'C. Allow unlimited log-in attempts', 'D. Enforce the user to change the default password at the first log-in'], 
-                    #                'answer': 'A. Inform users of each unsuccessful log-in attempt'}]]
+
                     st.success("Done!")
                     print(f"Generated quiz: {st.session_state.quiz}")
                 else:
@@ -506,19 +505,20 @@ def main():
     st.header("Quiz")
     if not st.session_state.quiz:
         st.write("No quiz generated")
-    else:      
+    else: 
+        # Display the quiz
         for i, question in enumerate(st.session_state.quiz):
             st.subheader(f"Question {i+1}")
             # print(f"Question {i+1}: {question}")
             st.session_state.user_answer[i] = st.radio(question["question"], question["options"], key=f"question_{i}", index=None)
 
         if st.button("Submit"):
+            # Generate feedback for wrong answers
             for i, question in enumerate(st.session_state.quiz):
                 if st.session_state.user_answer[i] == question["answer"]:
                     st.session_state.feedback[i] = "Correct!"
                 else:
                     # use LLM to generate feedback on wrong answers
-                    # st.session_state.feedback[f"{i}_{j}"] = f"Wrong! \n\nThe correct answer is {question['answer']}. \n\nYou answered {st.session_state.user_answer[f'{i}_{j}']}"
                     if st.session_state.user_answer_old.get(i) != st.session_state.user_answer[i]:
                         if st.session_state.large_file:
                             # use RAG to generate feedback for large files
@@ -527,6 +527,7 @@ def main():
                             st.session_state.feedback[i] = generate_feedback(st.session_state.llm, st.session_state.doc, question, st.session_state.user_answer[i])
                         st.session_state.user_answer_old[i] = st.session_state.user_answer[i]
         
+        # Display the feedback
         st.header("Feedback")
         if not st.session_state.feedback:
             st.write("Submit your answers to get feedback")
@@ -534,9 +535,6 @@ def main():
             for i, question in enumerate(st.session_state.quiz):
                 st.subheader(f"Question {i+1}")
                 st.write(st.session_state.feedback.get(i, "Submit your answer to get feedback"))
-
-        # TODO: add chat box to ask questions wheather related to the document or not
-        # TODO: add support for rate the question quality
 
 if __name__ == "__main__":
     main()
