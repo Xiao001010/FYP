@@ -46,7 +46,6 @@ def load_files(file, loader):
         # print(f"Loading {file.name} with UnstructuredPDFLoader")
         loader = UnstructuredPDFLoader(temp_path)
         pages = loader.load()
-        # print(f"Loaded {len(pages)} pages")
         return pages[0]
     elif loader == "TextLoader":
         loader = TextLoader(temp_path)
@@ -87,10 +86,7 @@ def embed(docs, embeddings):
     else:
         raise NotImplementedError
     # vectors = embeddings.embed_documents([chunk.page_content for chunk in chunks])
-    # print(f"Embedded {len(vectors)} chunks")
-    with get_openai_callback() as cb:
-        db = Chroma.from_documents(docs, embeddings)
-        print(f"Embedding Callback: \n{cb}")
+    db = Chroma.from_documents(docs, embeddings)
     return db
 
 def load_llm(llm_name):
@@ -134,7 +130,6 @@ def generate_quiz(llm, doc, n_questions=3):
     print(f"This doc has {len(doc.page_content)} characters. {len(doc.page_content) / llm.get_num_tokens(doc.page_content)} characters per token.")
     with get_openai_callback() as cb:
         quiz = quiz_chain.invoke([doc])
-        # quiz = quiz_chain.invoke()
         print(f"Generating Quiz Callback: \n{cb}")
 
     # print(f"Quiz: \n{quiz['output_text']}")
@@ -169,7 +164,6 @@ def generate_quiz_map_reduce(llm, docs, n_questions=3):
     ```{text}```
     """
     combine_prompt = re.sub(r"{n_questions}", str(n_questions), combine_prompt)
-    # print(combine_prompt)
     combine_prompt_template = PromptTemplate(template=combine_prompt, input_variables=["text"])
 
     quiz_chain = load_summarize_chain(llm,
@@ -233,7 +227,7 @@ def generate_quiz_clustering(llm, vectorstore, n_questions=3):
 
     ```{text}```
     """
-    # print(f"lem template: {len(template)}")
+    # print(f"len of template: {len(template)}")
     template = re.sub(r"{n_questions}", str(n_questions), template)
 
     prompt = PromptTemplate(
@@ -252,7 +246,6 @@ def generate_quiz_clustering(llm, vectorstore, n_questions=3):
         quiz = quiz_chain.invoke(selected_docs)
         print(f"Generate Quiz using clustering Callback: \n{cb}")
     
-    print(f"Generated quiz: {quiz['output_text']}")
     # remove "Question 1: ", "Question 2: ", "question 1", etc. from the beginning of the questions
     questions_list = [{"question": re.sub(r"question? ?\d+?\n", "", re.sub(r"Question? ?\d+?\n", "", re.split(r"\nOptions:", q)[0])),
                         "options": re.split(r"\n([A, B, C, D, a, b, c, d])", re.split(r"\nAnswer: ", re.split(r'Options:', q)[1])[0]),
@@ -260,7 +253,6 @@ def generate_quiz_clustering(llm, vectorstore, n_questions=3):
                         for q in re.split(r'Question \d+: ', quiz['output_text']) if q != ""]
     questions_list = [{"question": q["question"], "options": ["".join(x).strip() for x in zip(q["options"][1::2], q["options"][2::2])], "answer": q["answer"].strip()} for q in questions_list]
 
-    print(f"Generated quiz: {questions_list}")
     return questions_list
 
 def generate_feedback(llm, doc, question, user_answer):
@@ -389,8 +381,6 @@ def main():
     if 'feedback' not in st.session_state:
         st.session_state.feedback = {}
 
-    st.title("LLM Review Assistant")
-    st.write("A tool to help you review your documents")
 
     with st.sidebar:
         st.header("Settings")
@@ -480,6 +470,7 @@ def main():
                             elif st.session_state.generate_method == "MapReduce":
                                 st.session_state.quiz = generate_quiz_map_reduce(st.session_state.llm, st.session_state.chunks, st.session_state.n_questions)
                             elif st.session_state.generate_method == "Clustering":
+                                # alter the number of clusters to the number of questions
                                 if st.session_state.n_questions*chunk_size >  st.session_state.doc_limit:
                                     max_docs = st.session_state.doc_limit // chunk_size
                                     # print(f"The number of clusters is too large which will exceeding the GPT 3.5 limitation of 16k. The number of clusters is set to {n_question}.")
@@ -502,6 +493,8 @@ def main():
             else:
                 st.write("Click the button to process your documents")
     
+    st.title("LLM Review Assistant")
+    st.write("A tool to help you review your documents")
     st.header("Quiz")
     if not st.session_state.quiz:
         st.write("No quiz generated")
@@ -509,7 +502,6 @@ def main():
         # Display the quiz
         for i, question in enumerate(st.session_state.quiz):
             st.subheader(f"Question {i+1}")
-            # print(f"Question {i+1}: {question}")
             st.session_state.user_answer[i] = st.radio(question["question"], question["options"], key=f"question_{i}", index=None)
 
         if st.button("Submit"):
