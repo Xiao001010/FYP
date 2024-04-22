@@ -98,7 +98,7 @@ def load_llm(llm_name):
         raise NotImplementedError
     return llm
 
-def generate_quiz(llm, doc, n_questions=3):
+def generate_quiz(llm, docs, n_questions=3):
     template = """
     Using the content provided below from a PDF delimited by triple backquotes, 
     please generate a multiple-choice test consisting of {n_questions} questions to aid students in their review. 
@@ -126,17 +126,15 @@ def generate_quiz(llm, doc, n_questions=3):
                                       prompt=prompt, 
                                       verbose=False)
  
-    print(f"This doc has {llm.get_num_tokens(doc.page_content)} tokens.")
-    print(f"This doc has {len(doc.page_content)} characters. {len(doc.page_content) / llm.get_num_tokens(doc.page_content)} characters per token.")
     with get_openai_callback() as cb:
-        quiz = quiz_chain.invoke([doc])
+        quiz = quiz_chain.invoke(docs)
         print(f"Generating Quiz Callback: \n{cb}")
 
-    # print(f"Quiz: \n{quiz['output_text']}")
+    print(f"Quiz: \n{quiz['output_text']}")
     questions_list = [{"question": re.split(r"\nOptions:", q)[0], 
                         "options": re.split(r"\n([A, B, C, D])", re.split(r"\nAnswer: ", re.split(r'Options:', q)[1])[0]), 
                         "answer": re.split(r"\nAnswer:", q)[1]} 
-                        for q in re.split(r'Question \d+: ', quiz['output_text']) if q != ""]
+                        for q in re.split(r'\n?Question \d+: ', quiz['output_text']) if q != ""]
     questions_list = [{"question": q["question"], "options": ["".join(x).strip() for x in zip(q["options"][1::2], q["options"][2::2])], "answer": q["answer"].strip()} for q in questions_list]
 
     return questions_list
@@ -191,22 +189,19 @@ def generate_quiz_clustering(llm, vectorstore, n_questions=3):
     print(f"Using clustering to generate quiz with {len(vectors)} vectors to generate {n_questions} questions")
     num_clusters = n_questions
 
+    print(f"Clustering {len(vectors)} vectors into {num_clusters} clusters")
     kmeans = KMeans(n_clusters=num_clusters, random_state=42).fit(vectors)
     # labels_dict = {index:label for index, label in enumerate(kmeans.labels_)}
     # Find the closest embeddings to the centroids
-
     # Create an empty list that will hold your closest points
     closest_indices = []
 
     # Loop through the number of clusters you have
     for i in range(num_clusters):
-        
         # Get the list of distances from that particular cluster center
         distances = np.linalg.norm(vectors - kmeans.cluster_centers_[i], axis=1)
-        
         # Find the list position of the closest one (using argmin to find the smallest distance)
         closest_index = np.argmin(distances)
-        
         # Append that position to your closest indices list
         closest_indices.append(closest_index)
 
@@ -347,7 +342,6 @@ def generate_feedback_retrieval(llm, vectorstore, question, user_answer):
 
 def main():
     load_dotenv()
-    docs = []
 
     #  Initialize parameters in session state
     if 'filename' not in st.session_state:
@@ -462,29 +456,31 @@ def main():
                         print(f"Generating quiz using {st.session_state.llm_name}")
                         if st.session_state.large_file:
                             if st.session_state.generate_method == "Stuff":
-                                max_docs = st.session_state.doc_limit // chunk_size
+                                max_chunks = st.session_state.doc_limit // chunk_size
                                 num_chunks = len(st.session_state.chunks)
-                                stuff_chunks = [st.session_state.chunks[i:i+max_docs] for i in range(0, num_chunks, max_docs)]
-                                for i, chunks in enumerate(stuff_chunks):
-                                    st.session_state.quiz += generate_quiz(st.session_state.llm, chunks, st.session_state.n_questions)
+                                if st.session_state.n_questions > (num_chunks // max_chunks):
+                                    for i in range(num_chunks // max_chunks):
+                                        st.session_state.quiz += generate_quiz(st.session_state.llm, st.session_state.chunks[i*max_chunks:(i+1)*max_chunks], st.session_state.n_questions // (num_chunks//max_chunks))
+                                    if len(st.session_state.quiz) < st.session_state.n_questions:
+                                        st.session_state.quiz += generate_quiz(st.session_state.llm, st.session_state.chunks[(num_chunks//max_chunks)*max_chunks:], st.session_state.n_questions - len(st.session_state.quiz))
+                                else:
+                                    st.session_state.quiz = generate_quiz(st.session_state.llm, st.session_state.chunks[len(st.session_state.chunks)//2:len(st.session_state.chunks)//2+max_chunks], st.session_state.n_questions)
                             elif st.session_state.generate_method == "MapReduce":
                                 st.session_state.quiz = generate_quiz_map_reduce(st.session_state.llm, st.session_state.chunks, st.session_state.n_questions)
                             elif st.session_state.generate_method == "Clustering":
                                 # alter the number of clusters to the number of questions
                                 if st.session_state.n_questions*chunk_size >  st.session_state.doc_limit:
-                                    max_docs = st.session_state.doc_limit // chunk_size
-                                    # print(f"The number of clusters is too large which will exceeding the GPT 3.5 limitation of 16k. The number of clusters is set to {n_question}.")
-                                    for i in range(st.session_state.n_questions // max_docs):
-                                        st.session_state.quiz += generate_quiz_clustering(st.session_state.llm, st.session_state.db, max_docs)
-                                    st.session_state.quiz += generate_quiz_clustering(st.session_state.llm, st.session_state.db, st.session_state.n_questions % max_docs)
+                                    max_chunks = st.session_state.doc_limit // chunk_size
+                                    for i in range(st.session_state.n_questions // max_chunks):
+                                        st.session_state.quiz += generate_quiz_clustering(st.session_state.llm, st.session_state.db, max_chunks)
+                                    st.session_state.quiz += generate_quiz_clustering(st.session_state.llm, st.session_state.db, st.session_state.n_questions % max_chunks)
                                 else:
-                                    # print(f"The number of clusters is set to {n_question}.")
                                     st.session_state.quiz = generate_quiz_clustering(st.session_state.llm, st.session_state.db, st.session_state.n_questions)
                                 
                             else:
                                 raise NotImplementedError
                         else:
-                            st.session_state.quiz = generate_quiz(st.session_state.llm, st.session_state.doc, st.session_state.n_questions)
+                            st.session_state.quiz = generate_quiz(st.session_state.llm, [st.session_state.doc], st.session_state.n_questions)
 
                     st.success("Done!")
                     print(f"Generated quiz: {st.session_state.quiz}")
