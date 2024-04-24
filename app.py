@@ -223,7 +223,7 @@ def generate_quiz_clustering(llm, vectorstore, n_questions=3):
 
     ```{text}```
     """
-    # print(f"len of template: {len(template)}")
+
     template = re.sub(r"{n_questions}", str(n_questions), template)
 
     prompt = PromptTemplate(
