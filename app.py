@@ -1,6 +1,7 @@
 import os
 import re
 import tempfile
+import random
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -200,10 +201,10 @@ def generate_quiz_clustering(llm, vectorstore, n_questions=3):
     for i in range(num_clusters):
         # Get the list of distances from that particular cluster center
         distances = np.linalg.norm(vectors - kmeans.cluster_centers_[i], axis=1)
-        # Find the list position of the closest one (using argmin to find the smallest distance)
-        closest_index = np.argmin(distances)
+        # Find the list position of the closest embeddings to the centroid
+        closest_indeces = np.argsort(distances)[:3]
         # Append that position to your closest indices list
-        closest_indices.append(closest_index)
+        closest_indices.append(random.choice(closest_indeces))
 
     # Print the indices of the closest embeddings to the centroids
     print(f"closest_indices: {closest_indices}")
