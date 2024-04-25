@@ -202,9 +202,9 @@ def generate_quiz_clustering(llm, vectorstore, n_questions=3):
         # Get the list of distances from that particular cluster center
         distances = np.linalg.norm(vectors - kmeans.cluster_centers_[i], axis=1)
         # Find the list position of the closest embeddings to the centroid
-        closest_indeces = np.argsort(distances)[:3]
+        closest_index = np.argsort(distances)[:3]
         # Append that position to your closest indices list
-        closest_indices.append(random.choice(closest_indeces))
+        closest_indices.append(random.choice(closest_index))
 
     # Print the indices of the closest embeddings to the centroids
     print(f"closest_indices: {closest_indices}")
@@ -317,22 +317,22 @@ def generate_feedback_retrieval(llm, vectorstore, question, user_answer):
 
     Feedback:
     """
-    template = re.sub(r"{question}", question["question"], template)
+    # template = re.sub(r"{question}", question["question"], template)
     template = re.sub(r"{options}", "; ".join(question["options"]), template)
     template = re.sub(r"{answer}", question["answer"], template)
-    # template = re.sub(r"{user_answer}", user_answer, template)
+    template = re.sub(r"{user_answer}", user_answer, template)
     # print(f"Using template for feedback: \n{template}")
     custom_rag_prompt = PromptTemplate.from_template(template)
 
     rag_chain = (
-        {"context": retriever | format_docs, "user_answer": RunnablePassthrough()}
+        {"context": retriever | format_docs, "question": RunnablePassthrough()}
         | custom_rag_prompt
         | llm
         | StrOutputParser()
     )
 
     with get_openai_callback() as cb:
-        feedback = rag_chain.invoke(user_answer)
+        feedback = rag_chain.invoke(question["question"])
         print(f"Generating Feedback using retrieval Callback: \n{cb}")
 
     # delete "Feedback:", "Feedback: ", "Feedback: \n" etc. from the beginning of the feedback
@@ -425,7 +425,7 @@ def main():
                 
                 st.success("Done!")
             # Select the quiz generation method
-            st.session_state.generate_method = st.selectbox("Choose Quiz Generation Method", ["MapReduce", "Clustering", "Stuff"])
+            st.session_state.generate_method = st.selectbox("Choose Quiz Generation Method", ["Clustering", "MapReduce", "Stuff"])
         
         # Select the embeddings model
         st.session_state.embeddings = st.selectbox("Choose Embeddings model", ["OpenAIEmbeddings", "HuggingFaceInstructEmbeddings"])
